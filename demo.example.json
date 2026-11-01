@@ -1,0 +1,9 @@
+{
+  "owner": "rayleegit",
+  "repo": "1password-github-agent-demo",
+  "pull_number": 1,
+  "secret_ref": "op://PR Agent Demo/GitHub Read Token/credential",
+  "github_mcp_binary": "vendor/github-mcp-server",
+  "op_binary": "op",
+  "model": "gpt-5-mini"
+}

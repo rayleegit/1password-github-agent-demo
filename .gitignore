@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+demo.local.json
+vendor/
+artifacts/
+*.log
+.DS_Store
