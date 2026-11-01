@@ -106,6 +106,8 @@ class OpenAIResponses:
         self._key = key
 
     def create(self, payload):
+        from budget import reserve_request
+        reserve_request(payload)
         request = urllib.request.Request(
             "https://api.openai.com/v1/responses",
             data=json.dumps(payload).encode(),
@@ -139,6 +141,8 @@ async def run_agent(cfg, reader, provider, mode):
             "parallel_tool_calls": False,
             "max_output_tokens": 900,
             "store": False,
+            "service_tier": "default",
+            "reasoning": {"effort": "low"},
             "include": ["reasoning.encrypted_content"],
         }
         response = await asyncio.to_thread(provider.create, payload)
@@ -218,15 +222,15 @@ def clean_op_env(cfg, source):
 
 
 async def live_run(cfg, mode, consent):
+    if mode == "live" and not consent:
+        raise DemoError("Live AI requires --approve-model-call after approving data transfer and spend.")
+    if mode == "live" and not os.environ.get("OPENAI_API_KEY"):
+        raise DemoError("OPENAI_API_KEY is absent. Configure it securely outside chat.")
     from contextlib import AsyncExitStack
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
     from mcp_adapter import GitHubReader, validate_inventory
 
-    if mode == "live" and not consent:
-        raise DemoError("Live AI requires --approve-model-call after approving data transfer and spend.")
-    if mode == "live" and not os.environ.get("OPENAI_API_KEY"):
-        raise DemoError("OPENAI_API_KEY is absent. Configure it securely outside chat.")
     env = clean_op_env(cfg, os.environ)
     binary = str((ROOT / cfg.github_mcp_binary).resolve()) if not Path(cfg.github_mcp_binary).is_absolute() else cfg.github_mcp_binary
     if not Path(binary).is_file():
