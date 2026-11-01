@@ -11,3 +11,7 @@ class RetryTests(unittest.TestCase):
         for value in (-1, 21, True, "2"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 retry_delay(value)
+
+    def test_delay_cap(self):
+        self.assertEqual(retry_delay(5), 30)
+        self.assertEqual(retry_delay(20), 30)
