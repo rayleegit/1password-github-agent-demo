@@ -9,6 +9,7 @@ Initial build: 2026-10-31. All data is synthetic.
 - Real binary initialized through MCP Python 2.3.0 with a dummy invalid token; `tools/list` exposed exactly `pull_request_read` and confirmed the `get`/`get_diff` arguments. No GitHub tool calls or model calls in that protocol check.
 - Installed 1Password CLI 2.40.0 exposes `op run` with `op://` references, not the newer `--environment` flag.
 - Missing service-account configuration stops the smoke mode with a clear safe error.
+- An invalid-placeholder `op run` startup check timed out after 15 seconds in the restricted local environment. This is **inconclusive**, not a successful denial or a revocation test. The check now reports that state without a traceback.
 
 ## Not yet verified
 
