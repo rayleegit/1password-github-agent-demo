@@ -10,6 +10,8 @@ Initial build: 2026-10-31. All data is synthetic.
 - Installed 1Password CLI 2.40.0 exposes `op run` with `op://` references, not the newer `--environment` flag.
 - Missing service-account configuration stops the smoke mode with a clear safe error.
 - An invalid-placeholder `op run` startup check timed out after 15 seconds in the restricted local environment. This is **inconclusive**, not a successful denial or a revocation test. The check now reports that state without a traceback.
+- After adding the local cumulative spending guard and hidden-input launcher, 36 tests pass on main (37 with the synthetic PR's extra boundary test). The cost guard rejects unreviewed models, oversized requests, corrupt ledgers, and cumulative reservations over $1.
+- The configured model is now `gpt-6.1-terra`; the earlier GPT-5 Mini draft default was replaced after official documentation marked it deprecated. Pricing reviewed: standard $1/M input and $5/M output on 2026-10-31, https://developers.openai.com/api/docs/pricing. Account availability and actual provider requests are unverified.
 
 ## Not yet verified
 

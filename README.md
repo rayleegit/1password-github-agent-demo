@@ -46,7 +46,7 @@ The installer downloads GitHub MCP **2.0.3** from the official GitHub release an
 - Create a short-lived fine-grained GitHub PAT for the selected **private synthetic demo repository**. Grant Pull requests: Read-only and the required automatic Metadata permission. Do not use a broad classic PAT. Verify the exact scopes against the PR endpoint. The application also hard-binds owner/repo/PR: a fine-grained PAT can still read public resources outside its selected private repositories.
 - Store the PAT in a dedicated 1Password vault/item. Update `secret_ref` in `demo.local.json` with its `op://vault/item/field` reference. Prefer item/field IDs for rename resilience. No token belongs in the JSON.
 - Create a service account with read access only to that dedicated vault. Supply `OP_SERVICE_ACCOUNT_TOKEN` through a protected runtime secret or an ephemeral, non-echoing local prompt. Do not commit it, put it in shell history, paste it into chat, or show it on screen.
-- Set `OPENAI_API_KEY` separately for the model call. Use a supported Responses tool-calling model in `model`. The example name is not proof of access or availability on your account.
+- Set `OPENAI_API_KEY` separately for the model call. The default is `gpt-6.1-terra`, a current Responses tool-calling model; account access still requires verification. The spending guard rejects unreviewed model/tier changes.
 - Inspect the synthetic PR before consenting to send it to OpenAI. `store:false` avoids application-response storage; it is not a blanket zero-data-retention guarantee. Review your provider's retention controls and terms.
 
 Do not reuse the GitHub CLI's broad account credential as the agent token. No credential creation, rotation, revocation, or billing change is automated here.
@@ -65,7 +65,17 @@ This starts `op run`, scrubs the child environment, launches the pinned official
 .venv/bin/python agent.py --config demo.local.json --mode live --approve-model-call
 ```
 
-The approval flag is an explicit operator check, not a billing cap. Maximum four model requests, three tool calls, 900 output tokens per request, and bounded tool content. A budget cap must also be set with your provider. Live requests send the approved synthetic PR and instructions only. No implicit retries. On a tool failure, the run ends without a fabricated brief.
+The approval flag is an explicit operator check. Maximum four model requests, three tool calls, 900 output tokens per request, and bounded tool content. A cumulative local $1 reservation ledger in `artifacts/model-budget.json` reserves before each HTTP request at twice the reviewed token rates, using a conservative input bound and no retry refunds. This is not a provider-enforced billing cap or a guarantee against future pricing changes. Recheck pricing before live use, keep the ledger across runs, and configure provider billing controls too. Live requests send the approved synthetic PR and instructions only. No implicit retries. On a tool failure, the run ends without a fabricated brief.
+
+For local manual entry without echo or shell-history exposure:
+
+```sh
+.venv/bin/python scripts/run_secure.py --mode smoke
+# After the smoke test succeeds and the synthetic data/API budget are approved:
+.venv/bin/python scripts/run_secure.py --mode live
+```
+
+The launcher prompts for the bootstrap/provider keys locally and never writes them to a file. The GitHub PAT stays in 1Password. Do not type secrets while screen recording. Process memory still contains credentials; this is not memory isolation.
 
 The model chooses `details` or `diff`; Python translates that into the official MCP `pull_request_read` call. The model cannot choose another repo/PR, request a write method, execute code, browse URLs, or read local files through the available tool. Both views must be read before a brief is shown. These controls do not prove that the generated summary is correct: inspect it against the diff.
 

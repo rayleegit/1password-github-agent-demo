@@ -5,5 +5,5 @@
   "secret_ref": "op://PR Agent Demo/GitHub Read Token/credential",
   "github_mcp_binary": "vendor/github-mcp-server",
   "op_binary": "op",
-  "model": "gpt-5-mini"
+  "model": "gpt-6.1-terra"
 }
