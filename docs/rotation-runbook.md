@@ -13,4 +13,4 @@ Do not change or revoke production credentials for a demo. Use disposable, scope
 
 Value you can state: one controlled place to update the stored secret; fewer manual plaintext copies; stable application reference; repeatable restart and verification. Provider issuance/revocation and each consumer restart remain separate responsibilities.
 
-Current evidence: offline policy tests and protocol fixture only; live secret rotation is pending.
+Current evidence (1 November 2026): the recorded live-run transcript shows two GitHub reads and three model responses. Live replacement/revocation and denied-start checks remain unverified. Successful access does not establish those negative/lifecycle checks. Present rotation as an instructional procedure until it is tested with approved disposable credentials.

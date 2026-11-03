@@ -5,12 +5,14 @@ import asyncio
 import json
 import os
 import re
+import ssl
 import sys
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from demo_errors import DemoError
 
 ROOT = Path(__file__).resolve().parent
 MAX_MODEL_REQUESTS = 4
@@ -18,11 +20,80 @@ MAX_TOOL_CALLS = 3
 MAX_CONTENT_CHARS = 18000
 MAX_RESPONSE_BYTES = 250000
 EXPECTED_MCP_VERSION = "2.0.3"
-SECRET_PATTERN = re.compile(r"(?:github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|sk-[A-Za-z0-9_-]{16,})")
+# Best-effort recognizers, not a guarantee against arbitrary/encoded secrets.
+# Include the bootstrap credential as well as GitHub and model-provider keys.
+SECRET_PATTERN = re.compile(r"(?:github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|sk-[A-Za-z0-9_-]{16,}|\bops_[A-Za-z0-9_-]{16,})")
 
 
-class DemoError(Exception):
-    """Messages must be safe to display: never interpolate upstream exceptions."""
+def report_failure(exc):
+    """Unwrap async task-group errors without printing tracebacks or upstream text."""
+    pending = [exc]
+    failure = None
+    inspected = 0
+    while pending and inspected < 100:
+        current = pending.pop()
+        inspected += 1
+        if isinstance(current, DemoError):
+            failure = current
+            break
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(reversed(current.exceptions))
+    if failure is None:
+        failure = DemoError(
+            "Dependency or transport failure. No brief produced; raw upstream details suppressed.",
+            category="dependency_or_transport_failure",
+        )
+    fields = {"event": "run_failed", "stage": failure.stage, "category": failure.category}
+    if type(failure.http_status) is int and 100 <= failure.http_status <= 599:
+        fields["http_status"] = failure.http_status
+    if failure.request_id:
+        fields["request_id"] = failure.request_id
+    print(json.dumps(fields), file=sys.stderr)
+    print("STOPPED: " + str(failure), file=sys.stderr)
+
+
+def model_http_failure(exc):
+    """Map status/allowlisted 429 codes to fixed guidance, never raw API text."""
+    category, message = {
+        400: ("request_invalid", "Model API rejected the request parameters. Check model compatibility; do not broaden key permissions blindly."),
+        401: ("authentication_failed", "Model API rejected authentication. Check the OpenAI key and its project; do not paste the key into chat."),
+        403: ("permission_denied", "Model API denied access. Check the key/project permissions for Responses and the selected model."),
+        404: ("model_or_endpoint_unavailable", "Model or endpoint unavailable to this project. Check the configured model and project access."),
+        408: ("request_timeout", "Model API timed out. Check usage before retrying; the local reservation remains."),
+        429: ("rate_limit_or_quota", "Model API reported a rate or quota limit. Check project billing, credits, and limits before retrying."),
+    }.get(exc.code, ("http_failure", "Model API returned an HTTP failure; raw response details suppressed."))
+    if 500 <= exc.code <= 599:
+        category, message = "service_error", "Model service returned a server error. Check service status before retrying."
+    if 300 <= exc.code <= 399:
+        category, message = "redirect_blocked", "Model endpoint attempted a redirect; credentials were not forwarded."
+    if exc.code == 429:
+        # Read a bounded error body in memory only. Never log its message, raw
+        # fields, or unrecognized codes; they may contain sensitive information.
+        try:
+            raw = exc.read(8193)
+            body = json.loads(raw) if len(raw) <= 8192 else None
+            error = body.get("error") if isinstance(body, dict) else None
+        except (OSError, ValueError, TypeError, RecursionError):
+            error = None
+        if isinstance(error, dict):
+            code, error_type = error.get("code"), error.get("type")
+            known = {
+                "credit_balance_exhausted": ("credits_exhausted", "OpenAI reports no prepaid credits remaining. Check API billing for the organization that owns this key; do not keep retrying."),
+                "organization_spend_limit_exceeded": ("organization_spend_limit", "OpenAI reports the organization spending limit was reached. Review usage and the approved limit before retrying."),
+                "project_spend_limit_exceeded": ("project_spend_limit", "OpenAI reports the project spending limit was reached. Review this key's project usage and approved limit before retrying."),
+                "organization_usage_limit_exceeded": ("organization_usage_limit", "OpenAI reports its assigned organization usage limit was reached. Review organization limits before retrying."),
+                "insufficient_quota": ("insufficient_quota", "OpenAI reports insufficient quota. Check API credits, billing, and usage limits for this key's organization/project; waiting alone will not fix quota."),
+                "rate_limit_exceeded": ("temporary_rate_limit", "OpenAI reports a request or token rate limit. Review model/project limits and recent traffic; wait for the applicable reset before retrying."),
+                "slow_down": ("temporary_rate_limit", "OpenAI reports traffic increased too quickly. Reduce request rate and follow the provider's retry delay; no automatic retry was made."),
+            }
+            if isinstance(code, str) and code in known:
+                category, message = known[code]
+            elif error_type == "insufficient_quota":
+                category, message = known["insufficient_quota"]
+            elif error_type == "rate_limit_error":
+                category, message = known["rate_limit_exceeded"]
+    request_id = exc.headers.get("x-request-id") if exc.headers else None
+    return DemoError(message, stage="openai", category=category, http_status=exc.code, request_id=request_id)
 
 
 @dataclass(frozen=True)
@@ -107,7 +178,10 @@ class OpenAIResponses:
 
     def create(self, payload):
         from budget import reserve_request
-        reserve_request(payload)
+        try:
+            reserve_request(payload)
+        except DemoError as exc:
+            raise DemoError(str(exc), stage="model_preflight", category="budget_guard") from None
         request = urllib.request.Request(
             "https://api.openai.com/v1/responses",
             data=json.dumps(payload).encode(),
@@ -119,13 +193,28 @@ class OpenAIResponses:
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
         try:
+            emit("model_request_started")
             with urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect()).open(request, timeout=45) as response:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
                 if len(raw) > MAX_RESPONSE_BYTES:
                     raise DemoError("Model response exceeded the demo limit.")
-                return json.loads(raw)
-        except (urllib.error.URLError, TimeoutError, ValueError):
-            raise DemoError("Model request failed. Check model access, billing, or connectivity; no raw error logged.") from None
+                data = json.loads(raw)
+                emit("model_response_received")
+                return data
+        except urllib.error.HTTPError as exc:
+            failure = model_http_failure(exc)
+            exc.close()
+            raise failure from None
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, ssl.SSLCertVerificationError):
+                raise DemoError("Model connection failed certificate verification. Repair the trusted certificate setup; do not disable TLS verification.", stage="openai", category="tls_verification_failed") from None
+            if isinstance(exc.reason, TimeoutError):
+                raise DemoError("Model connection timed out; no automatic retry. Review usage before rerunning.", stage="openai", category="connection_timeout") from None
+            raise DemoError("Unable to connect to the model API. Check DNS/network connectivity; raw details suppressed.", stage="openai", category="connection_failed") from None
+        except TimeoutError:
+            raise DemoError("Model request timed out; no automatic retry. Review usage before rerunning.", stage="openai", category="request_timeout") from None
+        except ValueError:
+            raise DemoError("Model API returned an invalid response; raw details suppressed.", stage="openai", category="invalid_response") from None
 
 
 async def run_agent(cfg, reader, provider, mode):
@@ -276,11 +365,8 @@ def main():
         else:
             answer = asyncio.run(live_run(cfg, args.mode, args.approve_model_call))
         print(answer)
-    except DemoError as exc:
-        print("STOPPED: " + str(exc), file=sys.stderr)
-        return 1
-    except (Exception, BaseExceptionGroup):
-        print("STOPPED: dependency, credential, or tool failure. No brief produced; raw upstream details suppressed.", file=sys.stderr)
+    except (Exception, BaseExceptionGroup) as exc:
+        report_failure(exc)
         return 1
     return 0
 

@@ -3,7 +3,7 @@
 import fcntl
 import json
 from pathlib import Path
-from agent import DemoError
+from demo_errors import DemoError
 
 LEDGER = Path(__file__).resolve().parent / "artifacts" / "model-budget.json"
 TOTAL_MICRODOLLARS = 1_000_000
