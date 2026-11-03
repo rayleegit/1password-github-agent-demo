@@ -15,6 +15,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=["smoke", "live"], default="smoke")
     parser.add_argument("--config", default=str(ROOT / "demo.local.json"))
+    parser.add_argument("--pause-before-run", action="store_true", help="Pause after hidden credential entry so recording can start before execution.")
     args = parser.parse_args()
     if not sys.stdin.isatty():
         raise SystemExit("Run from your own interactive terminal. Do not pipe credentials.")
@@ -36,6 +37,8 @@ def main():
             if not env["OPENAI_API_KEY"]:
                 raise SystemExit("No key entered.")
             command.append("--approve-model-call")
+        if args.pause_before_run:
+            input("Credentials entered. Close password UI, frame the terminal, and start recording. Press Enter to run (Ctrl-C cancels): ")
         result = subprocess.run(command, cwd=ROOT, env=env)
         return result.returncode
     finally:

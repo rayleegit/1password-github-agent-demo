@@ -72,6 +72,13 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaises(DemoError):
             safe_text("leaked github_pat_" + "Z" * 30)
 
+    def test_service_account_token_pattern_rejected(self):
+        # Synthetic strings only. Prefix detection is not comprehensive DLP.
+        with self.assertRaises(DemoError):
+            safe_text("accidental bootstrap: ops_" + "A" * 30)
+        identifier = "stops_before_final_model_answer"
+        self.assertEqual(safe_text(identifier), identifier)
+
     def test_output_cap(self):
         with self.assertRaises(DemoError):
             safe_text("x" * 18001)
@@ -146,6 +153,46 @@ class LoopTests(unittest.IsolatedAsyncioTestCase):
             await run_agent(cfg(), BrokenReader(), fixture, "test")
         self.assertEqual(fixture.turn, 1)
 
+    async def test_pr_data_reaches_model_but_not_diagnostic_events(self):
+        marker = "SYNTHETIC-PR-CONTENT-CANARY"
+        fixture = FixtureModel(cfg())
+        requests = []
+        class Reader:
+            async def read(self, args):
+                return {"url": cfg().url, args["view"]: marker}
+        def record(payload):
+            requests.append(json.loads(json.dumps(payload)))
+            result = fixture.create(payload)
+            if fixture.turn == 3:
+                result["output"] = [{"type": "message", "content": [{"type": "output_text", "text": f"{marker}: {cfg().url}"}]}]
+            return result
+        events = io.StringIO()
+        with contextlib.redirect_stdout(events):
+            answer = await run_agent(cfg(), Reader(), SimpleNamespace(create=record), "test")
+        self.assertIn(marker, json.dumps(requests))
+        self.assertIn(marker, answer)  # The final brief is content, not telemetry.
+        self.assertNotIn(marker, events.getvalue())
+        self.assertEqual(json.loads(events.getvalue().splitlines()[-1])["event"], "brief_ready")
+
+    async def test_service_account_token_in_tool_result_stops_before_next_model_call(self):
+        fixture = FixtureModel(cfg())
+        class Reader:
+            async def read(self, args):
+                return {"body": "ops_" + "A" * 30}
+        with self.assertRaisesRegex(DemoError, "Possible credential"):
+            await run_agent(cfg(), Reader(), fixture, "test")
+        self.assertEqual(fixture.turn, 1)
+
+    async def test_service_account_token_in_final_brief_is_rejected(self):
+        fixture = FixtureModel(cfg())
+        def respond(payload):
+            result = fixture.create(payload)
+            if fixture.turn == 3:
+                result["output"] = [{"type": "message", "content": [{"type": "output_text", "text": cfg().url + " ops_" + "A" * 30}]}]
+            return result
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(DemoError, "Possible credential"):
+            await run_agent(cfg(), FixtureReader(cfg()), SimpleNamespace(create=respond), "test")
+
 
 class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_metadata_minimization(self):
@@ -153,7 +200,36 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             async def call_tool(self, name, args, **kwargs):
                 return SimpleNamespace(is_error=False, content=[SimpleNamespace(type="text", text=json.dumps({"number": 1, "html_url": cfg().url, "title": "Demo", "body": "safe", "state": "open", "user": {"private_detail": "not-needed"}}))])
         data = await GitHubReader(cfg(), Session()).read({"view": "details"})
-        self.assertNotIn("user", data)
+        self.assertEqual(data, {"url": cfg().url, "title": "Demo", "body": "safe"})
+
+    async def test_null_body_is_an_empty_description(self):
+        class Session:
+            async def call_tool(self, *args, **kwargs):
+                return SimpleNamespace(is_error=False, content=[SimpleNamespace(type="text", text=json.dumps({"number": 1, "html_url": cfg().url, "title": "Demo", "body": None}))])
+        data = await GitHubReader(cfg(), Session()).read({"view": "details"})
+        self.assertEqual(data["body"], "")
+
+    async def test_non_string_description_is_rejected(self):
+        for value in ({"unexpected": "field"}, [], False, 0):
+            class Session:
+                async def call_tool(self, *args, **kwargs):
+                    return SimpleNamespace(is_error=False, content=[SimpleNamespace(type="text", text=json.dumps({"number": 1, "html_url": cfg().url, "title": "Demo", "body": value}))])
+            with self.subTest(body_type=type(value).__name__), self.assertRaises(DemoError):
+                await GitHubReader(cfg(), Session()).read({"view": "details"})
+
+    async def test_boolean_pr_number_is_rejected(self):
+        class Session:
+            async def call_tool(self, *args, **kwargs):
+                return SimpleNamespace(is_error=False, content=[SimpleNamespace(type="text", text=json.dumps({"number": True, "html_url": cfg().url, "title": "Demo"}))])
+        with self.assertRaises(DemoError):
+            await GitHubReader(cfg(), Session()).read({"view": "details"})
+
+    async def test_text_block_with_non_string_payload_is_rejected(self):
+        class Session:
+            async def call_tool(self, *args, **kwargs):
+                return SimpleNamespace(is_error=False, content=[SimpleNamespace(type="text", text={"unexpected": "shape"})])
+        with self.assertRaises(DemoError):
+            await GitHubReader(cfg(), Session()).read({"view": "diff"})
 
     async def test_wrong_pr_rejected(self):
         class Session:
