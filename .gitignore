@@ -9,3 +9,16 @@ vendor/
 artifacts/
 *.log
 .DS_Store
+
+# Local presentation and recording assets are not part of this developer example.
+/presenter/
+/presenter-notes/
+/recordings/
+/slides/
+/storyboards/
+/teleprompter.txt
+/timed-script.txt
+/recording-notes.txt
+/*.pptx
+/*.mp4
+/*.m4a

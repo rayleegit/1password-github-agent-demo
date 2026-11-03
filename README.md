@@ -4,7 +4,7 @@ A bounded Python agent reads **one configured pull request** using GitHub's offi
 
 **Status (2 November 2026):** a recorded local run on 1 November completed three model responses, two real PR reads, and a cited brief. Subsequent content-boundary and diagnostic changes have offline test coverage, not a new live run. See [verification](docs/verification.md) for evidence and limits. Denial, rotation/revocation and cloud deployment remain unverified. Offline mode is a scripted fixture, not an AI model or authenticated demonstration.
 
-## What this teaches
+## Design
 
 1. Give the agent one useful, read-only job: summarize an existing PR's changes and suggest human-review questions. The example prompt requests three bullets and two questions; those counts are not a security feature.
 2. Let a trusted tool process handle authentication. Keep the credential out of code and model messages.
@@ -65,7 +65,7 @@ cp demo.example.json demo.local.json
 
 The installer downloads GitHub MCP **2.0.3** from the official GitHub release and verifies a platform-specific SHA-256 before extracting the binary. macOS and Linux are supported. The CLI has been inspected on macOS with 1Password **2.40.0**. This version supports `op://` references; its local help does not expose `op run --environment`, so this demo does not depend on that newer flag.
 
-### Credentials: configure outside chat and recording
+### Credentials
 
 - Create a short-lived fine-grained GitHub PAT for the selected **synthetic demo repository**. Grant Pull requests: Read-only and the required automatic Metadata permission. Do not use a broad classic PAT. Verify the exact scopes against the PR endpoint. This example repository is public: successfully reading it does not prove access to a private repository or prove that the token lacks write permissions. The application also hard-binds owner/repo/PR: a fine-grained PAT can still read public resources outside its selected private repositories.
 - Store the PAT in a dedicated 1Password vault/item. Update `secret_ref` in `demo.local.json` with its `op://vault/item/field` reference. Prefer item/field IDs for rename resilience. No token belongs in the JSON.
@@ -99,9 +99,9 @@ For local manual entry without echo or shell-history exposure:
 .venv/bin/python scripts/run_secure.py --mode live
 ```
 
-The launcher prompts for the bootstrap/provider keys locally and never writes them to a file. The GitHub PAT stays in 1Password. Do not type secrets while screen recording. Process memory still contains credentials; this is not memory isolation.
+The launcher prompts for the bootstrap/provider keys locally and never writes them to a file. The GitHub PAT stays in 1Password. Process memory still contains credentials; this is not memory isolation.
 
-For capture, add `--pause-before-run`. It pauses after hidden credential entry and consent, before starting the child process. Close credential UI, frame the terminal, start recording, then press Enter; Ctrl-C cancels. This changes only recording timing, not permissions, token handling, or the cumulative spending guard. An existing completed-run screen can be shown with that label instead of spending on a retake.
+The optional `--pause-before-run` flag pauses after credential entry and consent, before starting the child process. Press Enter to continue or Ctrl-C to cancel. It does not change permissions, token handling, or the cumulative spending guard.
 
 The model chooses `details` or `diff`; Python translates that into the official MCP `pull_request_read` call. The model cannot choose another repo/PR, request a write method, execute code, browse URLs, or read local files through the available tool. Both views must be read before a brief is shown. These controls do not prove that the generated summary is correct: inspect it against the diff.
 
@@ -125,7 +125,7 @@ Share only the sanitized event and fixed `STOPPED` message when troubleshooting.
 
 **Switching:** the same variable/reference can carry a new token or service identity with compatible permissions. Changing providers, endpoints, scopes, or GitHub PAT → GitHub App can require configuration/code changes. Do not call those changes universally zero-code.
 
-See [docs/rotation-runbook.md](docs/rotation-runbook.md) for the recording-safe checklist.
+See [docs/rotation-runbook.md](docs/rotation-runbook.md) for the credential lifecycle procedure.
 
 ## Production applicability and limits
 
